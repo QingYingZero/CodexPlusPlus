@@ -2204,7 +2204,7 @@ async fn upstream_request_returns_when_provider_accepts_but_never_sends_headers(
 }
 
 #[tokio::test]
-async fn aggregate_proxy_fails_over_to_next_member_in_same_request() {
+async fn aggregate_proxy_fails_over_without_rewriting_the_requested_model() {
     let _lock = settings_path_test_lock().lock().unwrap();
     let first = tokio::net::TcpListener::bind(("127.0.0.1", 0))
         .await
@@ -2228,6 +2228,7 @@ async fn aggregate_proxy_fails_over_to_next_member_in_same_request() {
         format!("http://{second_addr}/v1"),
     );
     for relay in settings.relay_profiles.iter_mut().take(2) {
+        relay.model = "gpt-5.6-terra".to_string();
         relay.relay_mode = RelayMode::PureApi;
         relay.no_auth = true;
         relay.api_key.clear();
@@ -2245,6 +2246,12 @@ async fn aggregate_proxy_fails_over_to_next_member_in_same_request() {
     assert_eq!(body.as_ref(), br#"{"id":"resp_1","object":"response"}"#);
     let first_request = first_server.await.unwrap();
     let second_request = second_server.await.unwrap();
+    let (_, first_body) = first_request.split_once("\r\n\r\n").unwrap();
+    let (_, second_body) = second_request.split_once("\r\n\r\n").unwrap();
+    let first_body: serde_json::Value = serde_json::from_str(first_body).unwrap();
+    let second_body: serde_json::Value = serde_json::from_str(second_body).unwrap();
+    assert_eq!(first_body["model"], "gpt-5-mini");
+    assert_eq!(second_body["model"], "gpt-5-mini");
     assert!(
         !first_request
             .to_ascii_lowercase()
@@ -2536,7 +2543,7 @@ async fn aggregate_stream_request_sends_sse_accept_header() {
 }
 
 #[tokio::test]
-async fn aggregate_proxy_rewrites_requested_model_to_selected_member_default_model() {
+async fn aggregate_proxy_preserves_requested_model_for_selected_member() {
     let _lock = settings_path_test_lock().lock().unwrap();
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
         .await
@@ -2592,10 +2599,10 @@ async fn aggregate_proxy_rewrites_requested_model_to_selected_member_default_mod
         format!("http://{addr}/v1"),
         format!("http://{fallback_addr}/v1"),
     );
-    settings.relay_profiles[0].model = "deepseek-v4-pro".to_string();
+    settings.relay_profiles[0].model = "gpt-5.6-terra".to_string();
 
     let result = open_responses_proxy_request_with_settings(
-        r#"{"model":"gpt-5.4","input":"hi","stream":false}"#,
+        r#"{"model":"gpt-5.6-sol","input":"hi","stream":false}"#,
         settings,
     )
     .await
@@ -2605,7 +2612,7 @@ async fn aggregate_proxy_rewrites_requested_model_to_selected_member_default_mod
     let body: serde_json::Value = serde_json::from_str(body).unwrap();
 
     assert_eq!(result.status_code, 200);
-    assert_eq!(body["model"], "deepseek-v4-pro");
+    assert_eq!(body["model"], "gpt-5.6-sol");
     fallback_server.abort();
 }
 
